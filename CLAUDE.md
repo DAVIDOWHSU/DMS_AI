@@ -75,5 +75,9 @@ docs/           設計說明 + Mermaid 圖
 - [x] 完整即時 pipeline `scripts/run_dms.py`(configs/default.yaml 可調參數)
 - [x] git init + 首 commit(b063fca);測試累計 50 綠
 - [ ] live 驗收 run_dms.py(閉眼 1 秒 → 紅框 + 嗶聲)
-- [ ] GitHub repo + push;docs/ 設計說明 + Mermaid 圖
-- [ ] 階段二:部署 Pi 5 / Jetson、INT8 量化、FPS/延遲 before-after
+- [x] GitHub repo + push(DAVIDOWHSU/DMS_AI,public + All Rights Reserved);
+      docs/(README、ARCHITECTURE、DESIGN_DECISIONS、DEPLOYMENT_OPTIMIZATION)
+- [x] 階段二前置:benchmark.py(分階段延遲/FPS/JSON)、inspect_model.py
+      (.task = 3 顆 TFLite;blendshapes 佔 25% 但未用;EAR+狀態機僅 0.01ms/幀)
+- [ ] live 鏡頭 benchmark baseline(`benchmark.py --output docs/benchmarks/laptop_camera.json`)
+- [ ] 階段二:部署 Pi 5 / Jetson(先 XNNPACK baseline,不夠快才量化)、FPS/延遲 before-after
