@@ -74,10 +74,19 @@ docs/           設計說明 + Mermaid 圖
 - [x] `src/dms/face.py`:FaceLandmarker Tasks API 封裝(腳本共用)
 - [x] 完整即時 pipeline `scripts/run_dms.py`(configs/default.yaml 可調參數)
 - [x] git init + 首 commit(b063fca);測試累計 50 綠
-- [ ] live 驗收 run_dms.py(閉眼 1 秒 → 紅框 + 嗶聲)
+- [x] live 驗收 run_dms.py(閉眼 1 秒 → 紅框 + 嗶聲)
 - [x] GitHub repo + push(DAVIDOWHSU/DMS_AI,public + All Rights Reserved);
       docs/(README、ARCHITECTURE、DESIGN_DECISIONS、DEPLOYMENT_OPTIMIZATION)
 - [x] 階段二前置:benchmark.py(分階段延遲/FPS/JSON)、inspect_model.py
       (.task = 3 顆 TFLite;blendshapes 佔 25% 但未用;EAR+狀態機僅 0.01ms/幀)
-- [ ] live 鏡頭 benchmark baseline(`benchmark.py --output docs/benchmarks/laptop_camera.json`)
+- [x] live 鏡頭 benchmark baseline(docs/benchmarks/laptop_camera.json:端到端 29.9 FPS,
+      瓶頸是鏡頭讀幀 20.2ms,推理 13.0ms)
+- [x] Q2 多人臉:src/dms/tracking.py 質心追蹤(穩定 id + 每人專屬狀態機,
+      data_factory 注入、Q3 可複用;含 face_centroid/face_bbox)、face.py 加
+      detect_faces()(detect() 保留兼容)、alert.py 加 draw_face_status()/
+      draw_drowsy_banner()、run_dms.py 用 tracker 管多狀態機、configs 加
+      face.num_faces=2 + tracking 參數。決策:駕駛=當幀最大臉,只有駕駛
+      DROWSY 才全屏紅框+嗶聲。23 個新測試,累計 73 綠
+- [ ] live 驗收 Q2(本人 + 手機照片各一張臉,確認 id 穩定、閉眼計時不互相干擾)
+- [ ] Q3 分心偵測(手機/手離方向盤,MediaPipe ObjectDetector 或 YOLO,先技術探路)
 - [ ] 階段二:部署 Pi 5 / Jetson(先 XNNPACK baseline,不夠快才量化)、FPS/延遲 before-after

@@ -1,7 +1,9 @@
 """
 alert.py — 疲勞警示(畫面 + 聲音)。
 
-- 視覺:DROWSY 時在畫面上加紅框 + 大字警告(draw_alert,直接改 frame)。
+- 視覺(單臉):DROWSY 時在畫面上加紅框 + 大字警告(draw_alert,直接改 frame)。
+- 視覺(多臉):每張臉各畫一個依狀態著色的框 + id/EAR/閉眼秒數
+  (draw_face_status);只有「駕駛」疲勞才疊全屏紅框(draw_drowsy_banner)。
 - 聲音:numpy 合成正弦波嗶聲,用 sounddevice 播放(mediapipe 已附帶,
   跨平台、之後上 Pi 也能用)。SoundAlert 內建冷卻時間,DROWSY 連續多幀
   也不會每幀都嗶。
@@ -85,31 +87,50 @@ class SoundAlert:
         return True
 
 
+# 狀態 → BGR 顏色(draw_alert / draw_face_status 共用)
+STATE_COLORS: dict[DrowsinessState, tuple[int, int, int]] = {
+    DrowsinessState.EYES_OPEN: (0, 200, 0),           # 綠
+    DrowsinessState.EYES_CLOSING: (0, 200, 200),      # 黃
+    DrowsinessState.DROWSY: (0, 0, 255),              # 紅
+    DrowsinessState.NO_MEASUREMENT: (180, 180, 180),  # 灰
+}
+
+
+def _ear_text(ear: float) -> str:
+    return f"EAR:{ear:.3f}" if ear == ear else "EAR: ---"  # NaN 檢查
+
+
+def draw_drowsy_banner(frame: np.ndarray) -> None:
+    """整圈紅色粗框 + 置中大字「DROWSY!」(就地修改)。"""
+    h, w = frame.shape[:2]
+    thickness = max(8, w // 60)
+    cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 0, 255), thickness)
+    cv2.putText(
+        frame,
+        "DROWSY!",
+        (w // 2 - 120, h // 2),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1.6,
+        (0, 0, 255),
+        4,
+    )
+
+
 def draw_alert(
     frame: np.ndarray,
     state: DrowsinessState,
     ear: float,
     closed_duration: float,
 ) -> None:
-    """把狀態與警示畫到 frame 上(就地修改)。
+    """單臉版:把狀態與警示畫到 frame 上(就地修改)。
 
     - 一律顯示左上角狀態列:狀態名稱 + EAR + 連續閉眼秒數。
     - DROWSY 時:整圈紅色粗框 + 置中大字「DROWSY!」。
     """
-    h, w = frame.shape[:2]
-
-    is_drowsy = state is DrowsinessState.DROWSY
-    color = {
-        DrowsinessState.EYES_OPEN: (0, 200, 0),       # 綠
-        DrowsinessState.EYES_CLOSING: (0, 200, 200),  # 黃
-        DrowsinessState.DROWSY: (0, 0, 255),          # 紅
-        DrowsinessState.NO_MEASUREMENT: (180, 180, 180),  # 灰
-    }[state]
-
-    ear_text = f"EAR:{ear:.3f}" if ear == ear else "EAR: ---"  # NaN 檢查
+    color = STATE_COLORS[state]
     cv2.putText(
         frame,
-        f"{state.name}  {ear_text}  closed:{closed_duration:.2f}s",
+        f"{state.name}  {_ear_text(ear)}  closed:{closed_duration:.2f}s",
         (10, 30),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,
@@ -117,15 +138,35 @@ def draw_alert(
         2,
     )
 
-    if is_drowsy:
-        thickness = max(8, w // 60)
-        cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 0, 255), thickness)
-        cv2.putText(
-            frame,
-            "DROWSY!",
-            (w // 2 - 120, h // 2),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1.6,
-            (0, 0, 255),
-            4,
-        )
+    if state is DrowsinessState.DROWSY:
+        draw_drowsy_banner(frame)
+
+
+def draw_face_status(
+    frame: np.ndarray,
+    state: DrowsinessState,
+    ear: float,
+    closed_duration: float,
+    bbox: tuple[int, int, int, int],
+    track_id: int,
+    is_driver: bool = False,
+) -> None:
+    """多臉版:對單張臉畫「依狀態著色的框 + 標籤」(就地修改)。
+
+    全屏紅框/嗶聲等全域警示由呼叫端決定(通常只對駕駛),
+    這裡只負責單張臉的局部繪製。
+
+    Args:
+        bbox: 臉框 (x1, y1, x2, y2),像素座標。
+        track_id: 追蹤器給的穩定 id,畫在標籤上方便目視對人。
+        is_driver: True 時標籤加註 DRIVER,框線加粗。
+    """
+    color = STATE_COLORS[state]
+    x1, y1, x2, y2 = bbox
+    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3 if is_driver else 2)
+
+    role = " DRIVER" if is_driver else ""
+    label = f"#{track_id}{role}  {state.name}  {_ear_text(ear)}  {closed_duration:.2f}s"
+    # 標籤畫在框上方;太靠頂就改畫框內,避免出界看不到
+    ty = y1 - 8 if y1 - 8 > 20 else y1 + 22
+    cv2.putText(frame, label, (x1, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)

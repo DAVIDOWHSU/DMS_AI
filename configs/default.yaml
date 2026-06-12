@@ -15,3 +15,10 @@ alert:
 camera:
   width: 1280    # 鏡頭實測支援 640/800/1280x720/1920x1080;720p 兼顧畫面大小與負擔
   height: 720
+
+face:
+  num_faces: 2   # FaceLandmarker 最多偵測幾張臉(駕駛 + 副駕)
+
+tracking:                   # 多人臉的質心追蹤(src/dms/tracking.py)
+  max_match_distance: 0.15  # 兩幀間臉中心移動超過此距離(正規化 0~1)就視為不同人
+  max_missed_frames: 15     # 連續消失達此幀數才刪除追蹤(30 FPS 下約 0.5 秒)

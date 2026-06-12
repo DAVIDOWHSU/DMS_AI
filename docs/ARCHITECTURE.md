@@ -4,14 +4,14 @@
 
 ```mermaid
 graph LR
-    A["📷 攝影機/影片"] --> B["FaceLandmarker<br/>Tasks API"]
-    B --> C["眼睛特徵點<br/>478 點"]
-    C --> D["EAR 計算<br/>眼睛張開比例"]
-    D --> E["疲勞判定<br/>時間制狀態機"]
-    E --> F{DROWSY?}
-    F -->|是| G["🔴 紅框警示"]
+    A["📷 攝影機/影片"] --> B["FaceLandmarker<br/>Tasks API<br/>num_faces=2"]
+    B --> C["質心追蹤<br/>穩定 id,狀態跟人走"]
+    C --> D["每人:EAR 計算<br/>眼睛張開比例"]
+    D --> E["每人:疲勞判定<br/>專屬時間制狀態機"]
+    E --> F{駕駛(最大臉)<br/>DROWSY?}
+    F -->|是| G["🔴 全屏紅框"]
     F -->|是| H["🔊 嗶聲警示"]
-    F -->|否| I["正常顯示"]
+    F -->|否| I["按臉畫框+狀態"]
     G --> J["即時畫面"]
     H --> J
     I --> J
@@ -25,16 +25,24 @@ scripts/
   └─ test_camera_facemesh.py (冒煙測試:偵測鏈路驗證)
 src/dms/
   ├─ face.py                 (MediaPipe Tasks API 封裝)
-  │  └─ FaceLandmarkerVideo:context manager,自動模型下載、BGR轉換、timestamp 遞增
+  │  ├─ FaceLandmarkerVideo:context manager,自動模型下載、BGR轉換、timestamp 遞增
+  │  ├─ detect_faces():回傳所有臉(多人場景)
+  │  └─ detect():回傳第一張臉(單臉便利介面,smoke test/benchmark 用)
   ├─ ear.py                  (EAR 純函式,EAR = (h1+h2)/(2w))
   │  ├─ compute_ear():單眼 EAR 計算
   │  ├─ eye_points_from_landmarks():正規化座標→像素座標
   │  └─ average_ear():雙眼平均,NaN 容錯
+  ├─ tracking.py             (質心追蹤,純幾何)
+  │  ├─ CentroidTracker:就近貪婪匹配,穩定 id + 每人專屬狀態(data_factory 注入)
+  │  ├─ face_centroid():臉中心(正規化)
+  │  └─ face_bbox():臉外接框(像素)
   ├─ drowsiness.py           (時間制狀態機)
   │  ├─ DrowsinessConfig:參數(ear_threshold, drowsy_seconds)
   │  └─ DrowsinessDetector:狀態遷移邏輯
   └─ alert.py                (警示層)
-     ├─ draw_alert():紅框+狀態列
+     ├─ draw_alert():紅框+狀態列(單臉版)
+     ├─ draw_face_status():按臉畫框+id/狀態/EAR(多臉版)
+     ├─ draw_drowsy_banner():全屏紅框+大字
      ├─ SoundAlert:嗶聲+冷卻
      └─ make_beep():numpy 合成正弦波
 configs/
@@ -42,7 +50,8 @@ configs/
 tests/
   ├─ test_ear.py             (18 tests:EAR 公式驗證)
   ├─ test_drowsiness.py      (20 tests:狀態機邏輯)
-  └─ test_alert.py           (12 tests:波形/冷卻/畫素)
+  ├─ test_alert.py           (12 tests:波形/冷卻/畫素)
+  └─ test_tracking.py        (23 tests:id 穩定性/消失容忍/幾何)
 ```
 
 ## 核心設計決策
@@ -118,7 +127,30 @@ sound.trigger(now=0.0)  # 無聲驗證
 cooldown_s: 1.5  # DROWSY 連續多幀也最多每 1.5s 嗶一次
 ```
 
-### 5. Tasks API(非舊版 mp.solutions)
+### 5. 多人臉:質心追蹤,狀態跟「人」走
+
+**問題:MediaPipe 每幀回傳的臉沒有穩定順序**——這幀的第 0 張臉,
+下一幀可能變第 1 張。若拿偵測順序對應狀態機,A 的閉眼計時會張冠李戴到 B。
+
+**選擇:質心追蹤(centroid tracking)+ 每人專屬狀態機**
+
+```python
+tracker = CentroidTracker(data_factory=lambda: DrowsinessDetector(cfg))
+tracks = tracker.update([face_centroid(lms) for lms in faces])
+# tracks[i].track_id 穩定、tracks[i].data 是這個人專屬的狀態機
+```
+
+- 就近貪婪匹配:距離 ≤ max_match_distance(0.15,正規化單位)→ 同一人
+- 消失容忍:連續 15 幀(~0.5s)沒匹配到才刪 track——閉眼挑戰時
+  偵測閃斷不會重置計時
+- `data_factory` 注入,不寫死 DrowsinessDetector → 之後分心偵測等
+  「按人累積」的狀態都能複用
+- 純幾何模組,單元測試不需 MediaPipe
+
+**多人警示語意:**「駕駛」= 當幀臉框面積最大者(離鏡頭最近)。
+只有駕駛 DROWSY 才觸發全屏紅框 + 嗶聲;乘客疲勞只在他的臉框顯示紅色狀態。
+
+### 6. Tasks API(非舊版 mp.solutions)
 
 **背景:mediapipe 0.10.3x 移除了舊版 `mp.solutions.face_mesh`**
 
@@ -158,8 +190,15 @@ alert:
   beep_volume: 0.5          # 0.0~1.0
 
 camera:
-  width: 640
-  height: 480
+  width: 1280    # 實測支援 640/800/1280x720/1920x1080
+  height: 720
+
+face:
+  num_faces: 2   # FaceLandmarker 最多偵測幾張臉(駕駛+副駕)
+
+tracking:
+  max_match_distance: 0.15  # 兩幀間臉中心移動超過此距離(正規化)視為不同人
+  max_missed_frames: 15     # 連續消失達此幀數才刪除追蹤(30 FPS 下 ~0.5s)
 ```
 
 改參數只需編輯 YAML,無需改程式碼。
@@ -180,8 +219,9 @@ camera:
 - **EAR**(18 tests):手算期望值、縮放/平移/旋轉不變性、退化保護
 - **狀態機**(20 tests):眨眼不誤觸、恰達門檻、NaN 斷檔、30 FPS 完整情境
 - **警示**(12 tests):波形質量、冷卻邏輯、紅框畫素
+- **追蹤**(23 tests):順序洗牌 id 不換人、消失容忍/刪除、data 跟人走、質心/外接框幾何
 
-**全部無頭**:不需攝影機、不需 GUI、不需喇叭 → CI 友善、跑得快(0.37s)。
+**全部無頭**:不需攝影機、不需 GUI、不需喇叭 → CI 友善、跑得快(73 tests < 1s)。
 
 ## 部署路徑(階段二規劃)
 
@@ -192,7 +232,7 @@ camera:
 
 2. **監控整合**
    - 疲勞事件上報(時間戳、EAR 值)
-   - 多人 tracking(若干簽)
+   - ~~多人 tracking~~(已完成:質心追蹤,見設計決策 5)
    - 數據存儲(SQLite/PostgreSQL)
 
 3. **OTA 更新**

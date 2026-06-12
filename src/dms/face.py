@@ -78,8 +78,12 @@ class FaceLandmarkerVideo:
         self._landmarker: FaceLandmarker = FaceLandmarker.create_from_options(options)
         self._last_ts_ms = -1
 
-    def detect(self, bgr_frame):
-        """對一幀 BGR 影像做偵測,回傳第一張臉的特徵點列表;沒臉回 None。"""
+    def detect_faces(self, bgr_frame) -> list:
+        """對一幀 BGR 影像做偵測,回傳**所有**臉的特徵點列表;沒臉回空 list。
+
+        注意:回傳順序由 MediaPipe 決定,幀與幀之間**不保證**同一張臉
+        在同一個 index —— 多人場景請配 dms.tracking.CentroidTracker 使用。
+        """
         rgb = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
@@ -89,9 +93,15 @@ class FaceLandmarkerVideo:
         self._last_ts_ms = ts_ms
 
         result = self._landmarker.detect_for_video(mp_image, ts_ms)
-        if not result.face_landmarks:
-            return None
-        return result.face_landmarks[0]
+        return list(result.face_landmarks)
+
+    def detect(self, bgr_frame):
+        """對一幀 BGR 影像做偵測,回傳第一張臉的特徵點列表;沒臉回 None。
+
+        單臉場景的便利介面(smoke test / benchmark 沿用)。
+        """
+        faces = self.detect_faces(bgr_frame)
+        return faces[0] if faces else None
 
     def close(self) -> None:
         self._landmarker.close()

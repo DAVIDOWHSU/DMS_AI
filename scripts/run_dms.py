@@ -1,7 +1,13 @@
 """
-run_dms.py — DMS 完整即時 pipeline。
+run_dms.py — DMS 完整即時 pipeline(支援多人臉)。
 
-    攝影機/影片 → FaceLandmarker → EAR → 疲勞狀態機 → 畫面 + 聲音警示
+    攝影機/影片 → FaceLandmarker(num_faces 張臉)→ 質心追蹤(穩定 id)
+    → 每人專屬 EAR + 疲勞狀態機 → 按臉畫框/狀態 + 聲音警示
+
+多人規則:
+    - 每張臉獨立累積閉眼時間(tracker 保證狀態跟「人」走,不跟偵測順序走)。
+    - 「駕駛」= 當幀臉框面積最大者(離鏡頭最近)。只有駕駛 DROWSY
+      才觸發全屏紅框 + 嗶聲;其他人疲勞只在他的臉框顯示紅色狀態。
 
 用法:
     python scripts/run_dms.py                          # 攝影機 0 + configs/default.yaml
@@ -9,7 +15,7 @@ run_dms.py — DMS 完整即時 pipeline。
     python scripts/run_dms.py --source data/samples/test.mp4
     python scripts/run_dms.py --config configs/my.yaml
 
-按 q 離開。閉眼超過 drowsy_seconds(預設 1 秒)會觸發紅框 + 嗶聲。
+按 q 離開。閉眼超過 drowsy_seconds(預設 1 秒)會觸發警示。
 """
 
 import argparse
@@ -23,7 +29,7 @@ import yaml
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from dms.alert import SoundAlert, draw_alert  # noqa: E402
+from dms.alert import SoundAlert, draw_drowsy_banner, draw_face_status  # noqa: E402
 from dms.drowsiness import (  # noqa: E402
     DrowsinessConfig,
     DrowsinessDetector,
@@ -37,6 +43,7 @@ from dms.ear import (  # noqa: E402
     eye_points_from_landmarks,
 )
 from dms.face import FaceLandmarkerVideo  # noqa: E402
+from dms.tracking import CentroidTracker, face_bbox, face_centroid  # noqa: E402
 
 DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "default.yaml"
 
@@ -73,6 +80,8 @@ def main() -> None:
     drowsy_cfg = cfg.get("drowsiness", {})
     alert_cfg = cfg.get("alert", {})
     camera_cfg = cfg.get("camera", {})
+    face_cfg = cfg.get("face", {})
+    tracking_cfg = cfg.get("tracking", {})
 
     source = parse_source(args.source)
     cap = cv2.VideoCapture(source)
@@ -85,11 +94,15 @@ def main() -> None:
         print("  - 確認沒有其他程式佔用鏡頭,或用 --source 指定影片檔路徑。")
         return
 
-    detector = DrowsinessDetector(
-        DrowsinessConfig(
-            ear_threshold=drowsy_cfg.get("ear_threshold", 0.2),
-            drowsy_seconds=drowsy_cfg.get("drowsy_seconds", 1.0),
-        )
+    drowsiness_config = DrowsinessConfig(
+        ear_threshold=drowsy_cfg.get("ear_threshold", 0.2),
+        drowsy_seconds=drowsy_cfg.get("drowsy_seconds", 1.0),
+    )
+    # 每個 track(= 每個人)一台專屬狀態機,閉眼計時互不干擾
+    tracker = CentroidTracker(
+        max_match_distance=tracking_cfg.get("max_match_distance", 0.15),
+        max_missed_frames=tracking_cfg.get("max_missed_frames", 15),
+        data_factory=lambda: DrowsinessDetector(drowsiness_config),
     )
     sound = SoundAlert(
         cooldown_s=alert_cfg.get("beep_cooldown_s", 1.5),
@@ -99,8 +112,9 @@ def main() -> None:
     )
     eye_idx = set(LEFT_EYE_IDX) | set(RIGHT_EYE_IDX)
 
-    print("[INFO] DMS pipeline 啟動,按 q 離開。")
-    with FaceLandmarkerVideo() as face:
+    num_faces = face_cfg.get("num_faces", 2)
+    print(f"[INFO] DMS pipeline 啟動(最多 {num_faces} 張臉),按 q 離開。")
+    with FaceLandmarkerVideo(num_faces=num_faces) as face:
         while True:
             ok, frame = cap.read()
             if not ok:
@@ -110,9 +124,20 @@ def main() -> None:
             h, w = frame.shape[:2]
             now = time.monotonic()
 
-            landmarks = face.detect(frame)
-            ear = float("nan")
-            if landmarks is not None:
+            faces = face.detect_faces(frame)
+            tracks = tracker.update([face_centroid(lms) for lms in faces])
+
+            # 駕駛 = 當幀臉框面積最大者(離鏡頭最近)
+            bboxes = [face_bbox(lms, w, h) for lms in faces]
+            driver_i = -1
+            if bboxes:
+                driver_i = max(
+                    range(len(bboxes)),
+                    key=lambda i: (bboxes[i][2] - bboxes[i][0])
+                    * (bboxes[i][3] - bboxes[i][1]),
+                )
+
+            for i, (landmarks, track) in enumerate(zip(faces, tracks)):
                 left = compute_ear(
                     eye_points_from_landmarks(landmarks, LEFT_EYE_IDX, w, h)
                 )
@@ -122,16 +147,39 @@ def main() -> None:
                 ear = average_ear(left, right)
 
                 # 眼點畫黃點,方便目視確認特徵點品質
-                for i in eye_idx:
-                    lm = landmarks[i]
+                for idx in eye_idx:
+                    lm = landmarks[idx]
                     cv2.circle(
                         frame, (int(lm.x * w), int(lm.y * h)), 2, (0, 255, 255), -1
                     )
 
-            state = detector.update(ear, now)
-            draw_alert(frame, state, ear, detector.closed_duration(now))
-            if state is DrowsinessState.DROWSY:
-                sound.trigger(now)
+                detector: DrowsinessDetector = track.data
+                state = detector.update(ear, now)
+                is_driver = i == driver_i
+                draw_face_status(
+                    frame,
+                    state,
+                    ear,
+                    detector.closed_duration(now),
+                    bboxes[i],
+                    track.track_id,
+                    is_driver=is_driver,
+                )
+                # 全屏紅框 + 嗶聲只留給駕駛;乘客疲勞只在他的臉框顯示
+                if is_driver and state is DrowsinessState.DROWSY:
+                    draw_drowsy_banner(frame)
+                    sound.trigger(now)
+
+            if not faces:
+                cv2.putText(
+                    frame,
+                    "NO FACE",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (180, 180, 180),
+                    2,
+                )
 
             cv2.imshow("DMS - press q to quit", frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
