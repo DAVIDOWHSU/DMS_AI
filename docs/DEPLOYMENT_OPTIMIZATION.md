@@ -18,6 +18,37 @@ FPS:          30~32(CPU)
 - ✅ float16 版本:可用(3.8 MB,预期等同 float32 精度)
 - ❌ INT8 版本:官方未提供,需手動量化
 
+### .task 模型内部组成(实际拆解,`scripts/inspect_model.py`)
+
+`.task` 文件本质是 zip 容器,内含 3 颗 TFLite 模型:
+
+| 内容 | 大小 | 占比 | pipeline 是否用到 |
+|---|---|---|---|
+| `face_landmarks_detector.tflite` | 2.55 MB | 67.9% | ✅ 主要推理(量化目标) |
+| `face_blendshapes.tflite` | 0.96 MB | 25.4% | ❌ **未使用**(blendshapes 选项默认关闭) |
+| `face_detector.tflite` | 0.23 MB | 6.1% | ✅ 找脸(之后转追踪) |
+| metadata | 0.02 MB | 0.5% | - |
+
+**洞察:**
+- 量化目标是 `face_landmarks_detector.tflite`(2.55MB),不是整个 .task
+- blendshapes 模型占 1/4 体积但完全没用到——部署时是纯粹的磁碟浪费
+  (运行时 `output_face_blendshapes=False` 已让它不参与推理,所以不影响 FPS)
+
+### 实测分阶段延迟(`scripts/benchmark.py`,2026-06-12 筆電)
+
+合成帧(无脸,纯 face detector 路径,640x480):
+
+| 阶段 | mean | p50 | p95 |
+|---|---|---|---|
+| FaceLandmarker 推理 | 7.46ms | 3.57ms | 15.15ms |
+| EAR + 状态机 | **0.01ms** | 0.01ms | 0.01ms |
+
+**关键结论:自己写的 Python 层(EAR + 状态机)成本可忽略(0.01ms),
+99% 的时间在模型推理 → 优化只需针对模型(量化/委派),不必动业务逻辑。**
+
+> 有脸的 live baseline(landmark 模型参与)请用镜头跑:
+> `python scripts/benchmark.py --frames 300 --output docs/benchmarks/laptop_camera.json`
+
 ## 部署场景对比
 
 | 装置 | CPU | 推理框架 | 预期 FPS | 预期延遲 | 成本 |
@@ -44,25 +75,8 @@ FPS:          30~32(CPU)
 
 ### 量化工具选择
 
-**选项 A:TensorFlow Lite Converter(推荐)**
-
-```python
-import tensorflow as tf
-
-# 加载 .task 模型(其实是 TFLite format)
-converter = tf.lite.TFLiteConverter.from_saved_model("face_landmarker.task")
-converter.optimizations = [tf.lite.Optimize.DEFAULT]  # 量化优化
-converter.target_spec.supported_ops = [
-    tf.lite.OpsSet.TFLITE_BUILTINS_INT8
-]
-
-# 量化
-quantized_tflite_model = converter.convert()
-```
-
-**选项 B:MediaPipe Model Maker(如果官方提供)**
-
-MediaPipe 有时提供官方量化脚本,但 face_landmarker 目前仍在维护中。
+见下方「量化实现細節(诚实评估)」——直接对 .task 跑 TFLiteConverter
+是行不通的(格式不符),实际可行的路线整理在那一节。
 
 ### 量化精度影响估算
 
@@ -187,49 +201,36 @@ scripts/run_dms.py
   └─ 無需改動(已支持 --config 參數)
 ```
 
-## 量化实现細節(如果要自己做)
+## 量化实现細節(诚实评估)
 
-### 用 TensorFlow Lite Converter
+### 为什么不能直接用 TFLiteConverter 转 .task
 
-```python
-# quantize_model.py
-import tensorflow as tf
-from pathlib import Path
+`tf.lite.TFLiteConverter.from_saved_model()` 吃的是 **SavedModel 目录**,
+而 `.task` 是 zip 容器、里面已经是编译好的 **TFLite flatbuffer** —— 格式对不上,
+直接转会失败。且 TFLite flatbuffer 是「转换的产物」,没有官方 API 能从
+flatbuffer 反向做 full-INT8 量化(需要原始模型 + 代表性数据集做 calibration)。
 
-def quantize_face_landmarker(input_path, output_path):
-    """
-    量化 FaceLandmarker 模型为 INT8。
-    
-    MediaPipe .task 文件本质是 TFLite 模型 + metadata,
-    可以用 TFLite Converter 处理。
-    """
-    
-    # 加载模型(注意:.task 是 TFLite 格式)
-    converter = tf.lite.TFLiteConverter.from_saved_model(str(input_path))
-    
-    # 启用 INT8 量化
-    converter.optimizations = [tf.lite.Optimize.DEFAULT]
-    converter.target_spec.supported_ops = [
-        tf.lite.OpsSet.TFLITE_BUILTINS_INT8
-    ]
-    
-    # 转换
-    quantized_model = converter.convert()
-    
-    # 保存
-    output_path.write_bytes(quantized_model)
-    print(f"量化完成: {output_path}")
-    return output_path
+### 实际可行的三条路(按推荐顺序)
 
-if __name__ == "__main__":
-    input_path = Path("models/face_landmarker.task")
-    output_path = Path("models/face_landmarker_int8.task")
-    quantize_face_landmarker(input_path, output_path)
-```
+**路线 A:运行时优化(零量化,先做)**
+- XNNPACK delegate 已自动启用(benchmark 日志可见),CPU 推理已是优化路径
+- Pi 5 上同样支持 XNNPACK(ARM NEON),部署后先量 baseline 再决定要不要量化
+- 真实可能性:Pi 5 + float16 + XNNPACK 已够 15 FPS,而 DMS 需求约 10 FPS 即可
 
-**注意:** 上述代码示意,实际可能需要调整(MediaPipe 的 .task 格式包含 metadata,简单的 TFLite Converter 可能无法完美处理)。
+**路线 B:绕过 Tasks API,直接跑 TFLite interpreter**
+- 从 .task 解压出 `face_detector.tflite` + `face_landmarks_detector.tflite`
+- 用 `tflite-runtime` 的 Interpreter 直接推理(自己写前后处理)
+- 好处:可对单颗模型做 dynamic-range 量化(不需 calibration 数据)、
+  可丢掉没用到的 blendshapes 模型(-25% 体积)
+- 代价:要自己实现 letterbox、anchor 解码、landmark 对齐——工作量大
 
-更安全的做法是**等待官方发布 INT8 版本**,或用 MediaPipe 官方工具(如有)。
+**路线 C:等官方 / 换模型**
+- MediaPipe 官方未来可能发布 INT8 variant
+- 或换更小的 landmark 模型(如 MediaPipe Face Mesh 旧模型、YuNet + PFLD 组合)
+
+**结论:阶段二拿到 Pi 后,先走路线 A 量 baseline;
+只有量出来不够用(<10 FPS)才投入路线 B。**
+"先量测、再优化" 比 "先优化、再量测" 更符合工程纪律。
 
 ## 性能量测模板
 

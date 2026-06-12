@@ -1,0 +1,43 @@
+{
+  "date": "2026-06-12",
+  "platform": {
+    "machine": "AMD64",
+    "processor": "AMD64 Family 25 Model 117 Stepping 2, AuthenticAMD",
+    "system": "Windows 11",
+    "python": "3.12.10"
+  },
+  "source": "synthetic 640x480 (no face)",
+  "frames_measured": 200,
+  "face_detected_frames": 0,
+  "fps_end_to_end": 133.8,
+  "stages": [
+    {
+      "stage": "read_frame",
+      "mean_ms": 0.0,
+      "p50_ms": 0.0,
+      "p95_ms": 0.0,
+      "max_ms": 0.01
+    },
+    {
+      "stage": "facelandmarker_inference",
+      "mean_ms": 7.46,
+      "p50_ms": 3.57,
+      "p95_ms": 15.15,
+      "max_ms": 17.57
+    },
+    {
+      "stage": "ear_plus_state_machine",
+      "mean_ms": 0.01,
+      "p50_ms": 0.01,
+      "p95_ms": 0.01,
+      "max_ms": 0.02
+    },
+    {
+      "stage": "total_per_frame",
+      "mean_ms": 7.47,
+      "p50_ms": 3.58,
+      "p95_ms": 15.16,
+      "max_ms": 17.58
+    }
+  ]
+}
