@@ -1,0 +1,14 @@
+# DMS 開發階段相依(筆電 / PC,CPU 即可,零花費)
+#
+# 重要:請用 Python 3.11 或 3.12。
+#   MediaPipe 目前(0.10.x)官方 wheel 最高只支援到 Python 3.12;
+#   Python 3.13 沒有預編 wheel、從源碼編會失敗,別踩這個雷。
+
+opencv-python>=4.9
+mediapipe>=0.10.30
+numpy>=1.26
+pytest>=8       # 跑 tests/
+pyyaml>=6       # 讀 configs/default.yaml
+
+# 之後可能會加(先不用裝):
+# ruff          # lint / format

@@ -1,0 +1,17 @@
+# DMS 可調參數(scripts/run_dms.py 載入;改這裡,不要改程式)
+#
+# 門檻依 2026-06-12 筆電實測:EAR 張眼 ~0.30、單眼閉 ~0.15、雙眼閉 <0.02
+
+drowsiness:
+  ear_threshold: 0.2     # EAR 低於此值視為閉眼
+  drowsy_seconds: 1.0    # 連續閉眼達此秒數 → 疲勞(眨眼約 0.1~0.4s)
+
+alert:
+  beep_frequency_hz: 880   # 警示音頻率
+  beep_duration_s: 0.4     # 警示音長度
+  beep_cooldown_s: 1.5     # 兩次警示音的最小間隔(防洗版)
+  beep_volume: 0.5         # 0.0 ~ 1.0
+
+camera:
+  width: 640
+  height: 480

@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# 測試樣本影片(不進 git)
+data/samples/
+
+# MediaPipe 模型檔(腳本會自動下載,不進 git)
+models/
+
+# IDE / OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 備份
+files.zip

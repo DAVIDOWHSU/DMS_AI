@@ -1,0 +1,4 @@
+# 最小設定:讓 pytest 找得到 src/ 下的 dms 套件(src layout)
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
