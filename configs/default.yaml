@@ -13,5 +13,5 @@ alert:
   beep_volume: 0.5         # 0.0 ~ 1.0
 
 camera:
-  width: 640
-  height: 480
+  width: 1280    # 鏡頭實測支援 640/800/1280x720/1920x1080;720p 兼顧畫面大小與負擔
+  height: 720
