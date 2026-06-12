@@ -49,8 +49,8 @@ tags: edge-ai, dms, computer-vision, portfolio
 - [x] 環境決策、專案骨架、攝影機 + MediaPipe 冒煙測試
 - [x] `src/dms/ear.py`：EAR 計算(純函式)+ 單元測試
 - [x] `src/dms/drowsiness.py`：連續閉眼的疲勞判定狀態機(時間制,非幀數)
-- [ ] `src/dms/alert.py`：警示(畫面/聲音)
-- [ ] 串起完整即時 pipeline 腳本
+- [x] `src/dms/alert.py`：警示(畫面紅框 + sounddevice 嗶聲,含冷卻)
+- [x] 串起完整即時 pipeline 腳本(`scripts/run_dms.py`,live 驗收待跑)
 - [ ] 部署到實體裝置、INT8 量化、記錄 before/after FPS 與延遲
 
 ---
@@ -192,3 +192,35 @@ tags: edge-ai, dms, computer-vision, portfolio
 - 學到:把「裝置相依的幀數」換成「物理量(秒)」是邊緣部署的關鍵習慣。
 - 下一步:`src/dms/alert.py` 警示(畫面/聲音),然後串完整即時 pipeline
   (FaceLandmarker → ear → drowsiness → alert)。也該 `git init` 了。
+
+---
+
+### 2026-06-12 · Day 1(完):alert + 完整 pipeline + git init
+
+**目標**
+完成警示模組、串起完整即時 pipeline,專案進版控。
+
+**做了什麼**
+- `src/dms/face.py`:FaceLandmarker 的 Tasks API 封裝(`FaceLandmarkerVideo`,
+  context manager;模型自動下載、BGR→mp.Image、timestamp 嚴格遞增都收進來),
+  冒煙測試與 pipeline 共用,消除重複碼。
+- `src/dms/alert.py`:`draw_alert()` 視覺警示(狀態列 + DROWSY 紅框大字)、
+  `SoundAlert` 聲音警示(numpy 合成 880Hz 正弦波 + 5ms 淡入出防爆音,
+  sounddevice 播放,內建 1.5s 冷卻防洗版)。
+- `configs/default.yaml` + pyyaml:門檻、警示音、解析度全部外部化。
+- `scripts/run_dms.py`:完整 pipeline(攝影機 → FaceLandmarker → EAR →
+  狀態機 → 畫面/聲音警示),支援 `--source` 與 `--config`。
+- 測試累計 **50 綠**(alert 12 個:波形/冷卻/紅框畫素驗證,全部不需喇叭與 GUI)。
+- `git init` + 首 commit `b063fca`(18 檔、1482 行)。
+
+**決策與取捨**
+- 聲音用「numpy 合成 + sounddevice」而非 winsound:winsound 只有 Windows,
+  sounddevice(mediapipe 已附帶)跨平台,部署到 Pi 不用改警示層。
+- `SoundAlert` 的 player 設計成可注入的 callable:單元測試傳假 player,
+  不需要喇叭就能驗證冷卻邏輯 —— 與 EAR 純函式同一個「可測性優先」原則。
+- 視覺警示驗證直接斷言畫素(角落 BGR 值),不用 mock cv2。
+
+**學到的 / 下一步**
+- 下一步:live 跑 `scripts/run_dms.py` 驗收完整鏈路(閉眼 1 秒 → 紅框 + 嗶聲),
+  然後建 GitHub repo 推上去;再來是 docs/ 設計說明 + Mermaid 圖,
+  與階段二的裝置部署規劃。

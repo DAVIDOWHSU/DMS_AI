@@ -70,5 +70,10 @@ docs/           設計說明 + Mermaid 圖
       含即時 EAR 顯示;live 實測過:FPS 30~32,EAR 張眼 ~0.30 / 閉眼 <0.02)
 - [x] `src/dms/drowsiness.py`:連續閉眼的疲勞判定狀態機
       (時間制,預設 ear_threshold=0.2、drowsy_seconds=1.0;20 tests 綠,累計 38)
-- [ ] `src/dms/alert.py`:警示(畫面/聲音)
-- [ ] 串起完整即時 pipeline 腳本(FaceLandmarker → ear → drowsiness → alert)
+- [x] `src/dms/alert.py`:警示(紅框 + sounddevice 嗶聲,冷卻 1.5s;12 tests)
+- [x] `src/dms/face.py`:FaceLandmarker Tasks API 封裝(腳本共用)
+- [x] 完整即時 pipeline `scripts/run_dms.py`(configs/default.yaml 可調參數)
+- [x] git init + 首 commit(b063fca);測試累計 50 綠
+- [ ] live 驗收 run_dms.py(閉眼 1 秒 → 紅框 + 嗶聲)
+- [ ] GitHub repo + push;docs/ 設計說明 + Mermaid 圖
+- [ ] 階段二:部署 Pi 5 / Jetson、INT8 量化、FPS/延遲 before-after
