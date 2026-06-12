@@ -11,6 +11,10 @@ data/samples/
 # MediaPipe 模型檔(腳本會自動下載,不進 git)
 models/
 
+# Claude Code 的本地指令檔(給 AI 工具看的工作底稿,不對外公開;
+# 對人的策展文件在 README + docs/)
+CLAUDE.md
+
 # IDE / OS
 .vscode/
 .DS_Store
